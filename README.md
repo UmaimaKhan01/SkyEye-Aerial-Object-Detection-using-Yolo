@@ -59,17 +59,6 @@ python val.py --weights ./weights/skyeye_t.pt --data ./data/skyeye.yaml --img 20
 python box_fusion.py
 ```
 
----
-
-## Suggested Visuals to Include
-
-- Sample input vs. detection output  
-- Example image from your dataset with annotated objects  
-- A chart showing mAP or F1-score over training epochs  
-- Simple block diagram of SkyEye's transformer-enhanced architecture
-
----
-
 ## Notes
 
 SkyEye is optimized for scenarios where traditional object detectors underperform, such as dense vehicle scenes, pedestrian tracking from drones, or surveillance over complex urban areas. The transformer modules embedded in the prediction head help the model better understand spatial relationships and context.
