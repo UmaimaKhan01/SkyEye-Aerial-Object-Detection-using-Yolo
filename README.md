@@ -7,6 +7,7 @@ Perfect — here’s the cleaned-up, rebranded README using **SkyEye** as the pr
 **SkyEye** is a specialized object detection framework designed for analyzing aerial and drone-captured images. Built on top of YOLOv5 and enhanced with transformer-based modules, it improves detection accuracy for small, crowded, and overlapping objects often found in top-down scenes.
 
 ---
+![image](https://github.com/user-attachments/assets/71356516-180f-4423-b17a-f831706142f5)
 
 ## Overview
 
