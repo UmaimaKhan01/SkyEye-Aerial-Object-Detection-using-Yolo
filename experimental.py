@@ -3,7 +3,6 @@
 Experimental modules
 """
 import math
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -12,109 +11,109 @@ from models.common import Conv
 from utils.downloads import attempt_download
 
 
-class CrossConv(nn.Module):
-    # Cross Convolution Downsample
-    def __init__(self, c1, c2, k=3, s=1, g=1, e=1.0, shortcut=False):
-        # ch_in, ch_out, kernel, stride, groups, expansion, shortcut
+class CrossProjection(nn.Module):
+    # Cross-axis downsampling using asymmetric convolutions
+    def __init__(self, in_channels, out_channels, ksize=3, stride=1, groups=1, expand=1.0, residual=False):
         super().__init__()
-        c_ = int(c2 * e)  # hidden channels
-        self.cv1 = Conv(c1, c_, (1, k), (1, s))
-        self.cv2 = Conv(c_, c2, (k, 1), (s, 1), g=g)
-        self.add = shortcut and c1 == c2
+        mid_channels = int(out_channels * expand)
+        self.layer1 = Conv(in_channels, mid_channels, (1, ksize), (1, stride))
+        self.layer2 = Conv(mid_channels, out_channels, (ksize, 1), (stride, 1), g=groups)
+        self.residual = residual and in_channels == out_channels
 
     def forward(self, x):
-        return x + self.cv2(self.cv1(x)) if self.add else self.cv2(self.cv1(x))
+        out = self.layer2(self.layer1(x))
+        return x + out if self.residual else out
 
 
-class Sum(nn.Module):
-    # Weighted sum of 2 or more layers https://arxiv.org/abs/1911.09070
-    def __init__(self, n, weight=False):  # n: number of inputs
+class WeightedMerge(nn.Module):
+    # Weighted or unweighted summation of multiple feature maps
+    def __init__(self, num_inputs, use_weights=False):
         super().__init__()
-        self.weight = weight  # apply weights boolean
-        self.iter = range(n - 1)  # iter object
-        if weight:
-            self.w = nn.Parameter(-torch.arange(1.0, n) / 2, requires_grad=True)  # layer weights
+        self.use_weights = use_weights
+        self.indices = range(num_inputs - 1)
+        if use_weights:
+            self.weights = nn.Parameter(-torch.arange(1.0, num_inputs) / 2, requires_grad=True)
 
-    def forward(self, x):
-        y = x[0]  # no weight
-        if self.weight:
-            w = torch.sigmoid(self.w) * 2
-            for i in self.iter:
-                y = y + x[i + 1] * w[i]
+    def forward(self, inputs):
+        output = inputs[0]
+        if self.use_weights:
+            weight_values = torch.sigmoid(self.weights) * 2
+            for idx in self.indices:
+                output = output + inputs[idx + 1] * weight_values[idx]
         else:
-            for i in self.iter:
-                y = y + x[i + 1]
-        return y
+            for idx in self.indices:
+                output = output + inputs[idx + 1]
+        return output
 
 
-class MixConv2d(nn.Module):
-    # Mixed Depth-wise Conv https://arxiv.org/abs/1907.09595
-    def __init__(self, c1, c2, k=(1, 3), s=1, equal_ch=True):  # ch_in, ch_out, kernel, stride, ch_strategy
+class MultiKernelConv(nn.Module):
+    # Mixed kernel depthwise convolutions with dynamic channel distribution
+    def __init__(self, in_channels, out_channels, kernels=(1, 3), stride=1, equal_channels=True):
         super().__init__()
-        n = len(k)  # number of convolutions
-        if equal_ch:  # equal c_ per group
-            i = torch.linspace(0, n - 1E-6, c2).floor()  # c2 indices
-            c_ = [(i == g).sum() for g in range(n)]  # intermediate channels
-        else:  # equal weight.numel() per group
-            b = [c2] + [0] * n
-            a = np.eye(n + 1, n, k=-1)
-            a -= np.roll(a, 1, axis=1)
-            a *= np.array(k) ** 2
-            a[0] = 1
-            c_ = np.linalg.lstsq(a, b, rcond=None)[0].round()  # solve for equal weight indices, ax = b
+        num_kernels = len(kernels)
 
-        self.m = nn.ModuleList(
-            [nn.Conv2d(c1, int(c_), k, s, k // 2, groups=math.gcd(c1, int(c_)), bias=False) for k, c_ in zip(k, c_)])
-        self.bn = nn.BatchNorm2d(c2)
-        self.act = nn.SiLU()
+        if equal_channels:
+            kernel_map = torch.linspace(0, num_kernels - 1E-6, out_channels).floor()
+            ch_splits = [(kernel_map == i).sum().item() for i in range(num_kernels)]
+        else:
+            b = [out_channels] + [0] * num_kernels
+            a = np.eye(num_kernels + 1, num_kernels, k=-1)
+            a -= np.roll(a, 1, axis=1)
+            a *= np.array(kernels) ** 2
+            a[0] = 1
+            ch_splits = np.linalg.lstsq(a, b, rcond=None)[0].round().astype(int)
+
+        self.blocks = nn.ModuleList([
+            nn.Conv2d(in_channels, ch, k, stride, k // 2, groups=math.gcd(in_channels, ch), bias=False)
+            for k, ch in zip(kernels, ch_splits)
+        ])
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.activation = nn.SiLU()
 
     def forward(self, x):
-        return self.act(self.bn(torch.cat([m(x) for m in self.m], 1)))
+        features = [block(x) for block in self.blocks]
+        return self.activation(self.bn(torch.cat(features, dim=1)))
 
 
-class Ensemble(nn.ModuleList):
-    # Ensemble of models
+class ModelGroup(nn.ModuleList):
+    # Ensemble module for combining predictions from multiple models
     def __init__(self):
         super().__init__()
 
     def forward(self, x, augment=False, profile=False, visualize=False):
-        y = []
-        for module in self:
-            y.append(module(x, augment, profile, visualize)[0])
-        # y = torch.stack(y).max(0)[0]  # max ensemble
-        # y = torch.stack(y).mean(0)  # mean ensemble
-        y = torch.cat(y, 1)  # nms ensemble
-        return y, None  # inference, train output
+        outputs = []
+        for model in self:
+            outputs.append(model(x, augment, profile, visualize)[0])
+        return torch.cat(outputs, dim=1), None  # concatenation for NMS-based merging
 
 
-def attempt_load(weights, map_location=None, inplace=True, fuse=True):
+def load_combined(weights, map_location=None, inplace=True, fuse=True):
     from models.yolo import Detect, Model
 
-    # Loads an ensemble of models weights=[a,b,c] or a single model weights=[a] or weights=a
-    model = Ensemble()
-    for w in weights if isinstance(weights, list) else [weights]:
-        ckpt = torch.load(attempt_download(w), map_location=map_location)  # load
+    container = ModelGroup()
+    weight_list = weights if isinstance(weights, list) else [weights]
+
+    for weight_path in weight_list:
+        checkpoint = torch.load(attempt_download(weight_path), map_location=map_location)
+        net = checkpoint['ema'] if 'ema' in checkpoint else checkpoint['model']
+        net = net.float().eval()
         if fuse:
-            model.append(ckpt['ema' if ckpt.get('ema') else 'model'].float().fuse().eval())  # FP32 model
-        else:
-            model.append(ckpt['ema' if ckpt.get('ema') else 'model'].float().eval())  # without layer fuse
+            net = net.fuse()
+        container.append(net)
 
-    # Compatibility updates
-    for m in model.modules():
-        if type(m) in [nn.Hardswish, nn.LeakyReLU, nn.ReLU, nn.ReLU6, nn.SiLU, Detect, Model]:
-            m.inplace = inplace  # pytorch 1.7.0 compatibility
-            if type(m) is Detect:
-                if not isinstance(m.anchor_grid, list):  # new Detect Layer compatibility
-                    delattr(m, 'anchor_grid')
-                    setattr(m, 'anchor_grid', [torch.zeros(1)] * m.nl)
-        elif type(m) is Conv:
-            m._non_persistent_buffers_set = set()  # pytorch 1.6.0 compatibility
+    for module in container.modules():
+        if isinstance(module, (nn.ReLU, nn.SiLU, nn.ReLU6, nn.LeakyReLU, nn.Hardswish, Detect, Model)):
+            module.inplace = inplace
+            if isinstance(module, Detect) and not isinstance(module.anchor_grid, list):
+                module.anchor_grid = [torch.zeros(1)] * module.nl
+        elif isinstance(module, Conv):
+            module._non_persistent_buffers_set = set()
 
-    if len(model) == 1:
-        return model[-1]  # return model
+    if len(container) == 1:
+        return container[0]
     else:
-        print(f'Ensemble created with {weights}\n')
-        for k in ['names']:
-            setattr(model, k, getattr(model[-1], k))
-        model.stride = model[torch.argmax(torch.tensor([m.stride.max() for m in model])).int()].stride  # max stride
-        return model  # return ensemble
+        print(f'ModelGroup built using: {weights}')
+        for attr in ['names']:
+            setattr(container, attr, getattr(container[-1], attr))
+        container.stride = container[torch.argmax(torch.tensor([m.stride.max() for m in container])).item()].stride
+        return container
