@@ -1,6 +1,3 @@
-Perfect — here’s the cleaned-up, rebranded README using **SkyEye** as the project name:
-
----
 
 # SkyEye: Transformer-Aware Object Detection for Aerial Imagery
 
@@ -64,6 +61,4 @@ python box_fusion.py
 
 SkyEye is optimized for scenarios where traditional object detectors underperform, such as dense vehicle scenes, pedestrian tracking from drones, or surveillance over complex urban areas. The transformer modules embedded in the prediction head help the model better understand spatial relationships and context.
 
----
 
-Let me know if you'd like this exported as a markdown file or customized further (e.g., with badge icons, dataset credits, or team information).
