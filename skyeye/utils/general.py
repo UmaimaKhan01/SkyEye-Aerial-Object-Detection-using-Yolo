@@ -192,4 +192,139 @@ def check_requirements(requirements=None, exclude=(), install=True):
     # Convert file path to package list
     if isinstance(requirements, (str, Path)):
         file = Path(requirements)
-        if not
+        if not file.exists():
+            LOGGER.error(f"{prefix} {file} not found")
+            return False
+            
+        requirements = [
+            f'{x.name}{x.specifier}' 
+            for x in pkg.parse_requirements(file.open()) 
+            if x.name not in exclude
+        ]
+    else:
+        requirements = [x for x in requirements if x not in exclude]
+    
+    # Check each requirement
+    n = 0  # Number of packages updated
+    for requirement in requirements:
+        try:
+            pkg.require(requirement)
+        except (pkg.VersionConflict, pkg.DistributionNotFound):
+            if install and check_online():
+                LOGGER.info(f"{prefix} {requirement} not found, attempting installation...")
+                try:
+                    subprocess.check_call(
+                        ['pip', 'install', requirement],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.STDOUT
+                    )
+                    n += 1
+                except Exception as e:
+                    LOGGER.error(f"{prefix} {e}")
+            else:
+                LOGGER.warning(f"{prefix} {requirement} not found")
+    
+    if n > 0:
+        source = file if 'file' in locals() else requirements
+        LOGGER.info(f"{prefix} {n} package(s) updated per {source}")
+    
+    return True
+
+
+def make_divisible(x, divisor=8):
+    """
+    Ensure x is divisible by divisor
+    
+    Args:
+        x (int or float): Input value
+        divisor (int): Divisor
+        
+    Returns:
+        int: Value rounded up to be divisible by divisor
+    """
+    return int(np.ceil(x / divisor) * divisor)
+
+
+def check_img_size(img_size, stride=32):
+    """
+    Make sure image size is a multiple of stride
+    
+    Args:
+        img_size (int or list): Image size
+        stride (int): Stride
+        
+    Returns:
+        list: New image size
+    """
+    # Verify image size is a multiple of stride s
+    if isinstance(img_size, int):
+        new_size = make_divisible(img_size, int(stride))
+    else:
+        new_size = [make_divisible(x, int(stride)) for x in img_size]
+        
+    if new_size != img_size:
+        LOGGER.warning(f'Image size {img_size} adjusted to {new_size} for model stride compatibility')
+        
+    return new_size
+
+
+def is_ascii(s=''):
+    """
+    Check if string is ASCII
+    
+    Args:
+        s (str): String to check
+        
+    Returns:
+        bool: True if string is ASCII
+    """
+    # Test if string is composed of ASCII characters only
+    s = str(s)  # convert list, tuple, None, etc. to str
+    return len(s.encode().decode('ascii', 'ignore')) == len(s)
+
+
+def is_chinese(s='人工智能'):
+    """
+    Check if string contains Chinese characters
+    
+    Args:
+        s (str): String to check
+        
+    Returns:
+        bool: True if string contains Chinese characters
+    """
+    return bool(re.search('[\u4e00-\u9fff]', str(s)))
+
+
+def increment_path(path, exist_ok=False, sep='', mkdir=False):
+    """
+    Increment file or directory path, i.e., runs/exp --> runs/exp{sep}0, runs/exp{sep}1, etc.
+    
+    Args:
+        path (str or Path): Path to increment
+        exist_ok (bool): If True, don't increment for existing paths
+        sep (str): Separator to use before increment number
+        mkdir (bool): Create directory if it doesn't exist
+        
+    Returns:
+        Path: Incremented path
+    """
+    path = Path(path)
+    
+    if path.exists() and not exist_ok:
+        # Look for existing paths with same prefix but higher suffix
+        suffix = path.suffix
+        path = path.with_suffix('') if suffix else path
+        
+        # Get matching directories with numeric suffixes
+        matches = list(path.parent.glob(f"{path.name}{sep}*"))
+        matches = [re.search(rf"%s{sep}(\d+)" % path.name, str(m)) for m in matches]
+        i = [int(m.groups()[0]) for m in matches if m]
+        n = max(i) + 1 if i else 2
+        
+        path = Path(f"{path}{sep}{n}{suffix}")
+    
+    if mkdir:
+        path.mkdir(parents=True, exist_ok=True)
+        
+    return path
