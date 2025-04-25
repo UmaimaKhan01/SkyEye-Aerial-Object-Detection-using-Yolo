@@ -3,7 +3,7 @@
 **SkyEye** is a high-performance detection system optimized for top-down visual scenes, such as drone footage and overhead surveillance. It integrates multi-scale feature attention and transformer-powered prediction heads to significantly boost detection accuracy, especially for small or overlapping objects.
 
 <p align="center">
-  <img width="800" src="https://i.imgur.com/XA2xBPL.png">
+  <img width="800" src="assets/skyeye.png">
 </p>
 
 ## Highlights
